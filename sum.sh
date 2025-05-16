@@ -21,8 +21,9 @@ sudo chown -R www-data:www-data "$NEXTCLOUD_DIR"
 
 # 3. 🔥 CORRECTE blobfuse2 installatie
 # Microsoft's repository toevoegen (specifiek voor blobfuse2)
-curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/microsoft-ubuntu-jammy-prod jammy main" | sudo tee /etc/apt/sources.list.d/microsoft-prod.list
+wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb
+sudo dpkg -i packages-microsoft-prod.deb
+sudo rm packages-microsoft-prod.deb
 sudo apt update
 sudo apt install -y blobfuse2
 
