@@ -32,7 +32,7 @@ sudo mkdir -p "$MOUNT_POINT"
 sudo chown -R www-data:www-data "$MOUNT_POINT"
 
 # 5. 🔥 Authenticatie via Managed Identity
-cat <<EOF | sudo tee /etc/blobfuse2.cfg
+cat <<EOF | sudo tee /etc/blobfuse2.yaml
 configversion: 2
 components:
   - libfuse
@@ -46,7 +46,7 @@ azstorage:
 EOF
 
 # 6. Mounten met debug-logging
-sudo blobfuse2 mount "$MOUNT_POINT" --config-file=/etc/blobfuse2.cfg --allow-other --log-level=LOG_DEBUG
+sudo blobfuse2 mount "$MOUNT_POINT" --config-file=/etc/blobfuse2.yaml --allow-other --log-level=LOG_DEBUG
 
 # 7. Apache configuratie
 cat <<EOF | sudo tee /etc/apache2/sites-available/nextcloud.conf
