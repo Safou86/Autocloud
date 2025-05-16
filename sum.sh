@@ -7,39 +7,32 @@ STORAGE_ACCOUNT_NAME="ezyinm7lu4klq"  # Vervang met je eigen storage account
 CONTAINER_NAME="nextclouddata"
 MOUNT_POINT="/mnt/nextclouddata"
 
-# Updates en vereisten
+# 1. Basisvereisten
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y apache2 mariadb-server libapache2-mod-php \
  php php-mysql php-gd php-xml php-mbstring php-curl php-zip php-intl \
  php-bcmath php-gmp php-imagick unzip wget
 
-# Nextcloud downloaden
+# 2. Nextcloud installeren
 wget https://download.nextcloud.com/server/releases/latest.zip
 unzip latest.zip
 sudo mv nextcloud "$NEXTCLOUD_DIR"
 sudo chown -R www-data:www-data "$NEXTCLOUD_DIR"
 
-### 🔥 Kritieke aanpassing: Correcte blobfuse2 installatie ###
-# Microsoft's repository toevoegen (specifiek voor Ubuntu 22.04)
-echo "deb [arch=amd64] https://packages.microsoft.com/ubuntu/22.04/prod jammy main" | sudo tee /etc/apt/sources.list.d/microsoft.list
+# 3. 🔥 CORRECTE blobfuse2 installatie
+# Microsoft's repository toevoegen (specifiek voor blobfuse2)
 curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+echo "deb [arch=amd64] https://packages.microsoft.com/ubuntu/22.04/prod jammy main" | sudo tee /etc/apt/sources.list.d/microsoft-prod.list
 sudo apt update
-
-# blobfuse2 installeren (nu zou het moeten werken)
 sudo apt install -y blobfuse2
 
-# Mount directory voorbereiden
+# 4. Mount voorbereiden
 sudo mkdir -p "$MOUNT_POINT"
 sudo chown -R www-data:www-data "$MOUNT_POINT"
 
-### 🔥 Verbeterde configuratie met SAS-token of managed identity ###
-# Maak eerst een tijdelijke SAS-token aan (vervang met je eigen token)
-# Of gebruik managed identity als je Azure AD-integratie hebt
-CONFIG_PATH="/etc/blobfuse2.cfg"
-cat <<EOF | sudo tee "$CONFIG_PATH"
+# 5. 🔥 Authenticatie via Managed Identity
+cat <<EOF | sudo tee /etc/blobfuse2.cfg
 configversion: 2
-logging:
-  type: syslog
 components:
   - libfuse
   - azstorage
@@ -47,21 +40,17 @@ azstorage:
   type: block
   account-name: ${STORAGE_ACCOUNT_NAME}
   container: ${CONTAINER_NAME}
-  auth-type: msi  # 🔥 Gebruik Managed Identity (aanbevolen) of "sas" met token
+  auth-type: msi  # 🔥 Gebruik VM's managed identity
   endpoint: https://${STORAGE_ACCOUNT_NAME}.blob.core.windows.net
-  mode: readwrite
 EOF
 
-# Mount testen (voeg --allow-other toe voor Apache toegang)
-sudo blobfuse2 mount "$MOUNT_POINT" --config-file="$CONFIG_PATH" --allow-other
+# 6. Mounten met debug-logging
+sudo blobfuse2 mount "$MOUNT_POINT" --config-file=/etc/blobfuse2.cfg --allow-other --log-level=LOG_DEBUG
 
-# Apache configuratie (zelfde als voorheen)
+# 7. Apache configuratie
 cat <<EOF | sudo tee /etc/apache2/sites-available/nextcloud.conf
 <VirtualHost *:80>
-    ServerAdmin admin@example.com
     DocumentRoot $NEXTCLOUD_DIR
-    Alias /nextcloud "$NEXTCLOUD_DIR/"
-
     <Directory $NEXTCLOUD_DIR/>
         Require all granted
         AllowOverride All
@@ -70,9 +59,8 @@ cat <<EOF | sudo tee /etc/apache2/sites-available/nextcloud.conf
 </VirtualHost>
 EOF
 
-# Apache herstarten
 sudo a2ensite nextcloud.conf
-sudo a2enmod rewrite headers env dir mime
+sudo a2enmod rewrite
 sudo systemctl restart apache2
 
-echo "✅ Nextcloud is klaar! Open http://$(curl -s ifconfig.me)/nextcloud"
+echo "✅ Nextcloud is bereikbaar op http://$(curl -s ifconfig.me)"
