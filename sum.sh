@@ -1,42 +1,54 @@
 #!/bin/bash
 set -e
+export DEBIAN_FRONTEND=noninteractive
 
-# Variabelen
-NEXTCLOUD_DIR="/var/www/nextcloud"
-STORAGE_ACCOUNT_NAME="ezyinm7lu4klq"  # Vervang met je eigen storage account
-CONTAINER_NAME="nextclouddata"
-MOUNT_POINT="/mnt/nextclouddata"
+main() {
+  local nextcloud_dir="/var/www/nextcloud"
+  local storage_account="ezyinm7lu4klq"
+  local container="nextclouddata"
+  local mount_point="/mnt/nextclouddata"
+  local config_path="/etc/blobfuse2.yaml"
 
-# 1. Basisvereisten
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y apache2 mariadb-server libapache2-mod-php \
- php php-mysql php-gd php-xml php-mbstring php-curl php-zip php-intl \
- php-bcmath php-gmp php-imagick unzip wget
+  install_dependencies
+  install_nextcloud "$nextcloud_dir"
+  setup_blobfuse2 "$storage_account" "$container" "$config_path"
+  mount_blobfuse2 "$config_path" "$mount_point"
+  configure_apache "$nextcloud_dir"
+}
 
-# 2. Nextcloud installeren
-wget https://download.nextcloud.com/server/releases/latest.zip
-unzip latest.zip
-sudo mv nextcloud "$NEXTCLOUD_DIR"
-sudo chown -R www-data:www-data "$NEXTCLOUD_DIR"
+install_dependencies() {
+  apt update -y
+  apt upgrade -y
+  apt install -y apache2 mariadb-server libapache2-mod-php \
+    php php-mysql php-gd php-xml php-mbstring php-curl php-zip php-intl \
+    php-bcmath php-gmp php-imagick unzip wget
+}
 
-# 3. 🔥 CORRECTE blobfuse2 installatie
-# Microsoft's repository toevoegen (specifiek voor blobfuse2)
-wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb
-sudo dpkg -i packages-microsoft-prod.deb
-sudo rm packages-microsoft-prod.deb
-sudo apt update
-sudo apt install -y blobfuse2
+install_nextcloud() {
+  local dir="$1"
+  wget https://download.nextcloud.com/server/releases/latest.zip
+  unzip latest.zip
+  mv nextcloud "$dir"
+  chown -R www-data:www-data "$dir"
+}
 
-# 4. Mount voorbereiden
-sudo mkdir -p "$MOUNT_POINT"
-sudo chown -R www-data:www-data "$MOUNT_POINT"
+setup_blobfuse2() {
+  local account="$1"
+  local container="$2"
+  local config="$3"
 
-# 5. 🔥 Authenticatie via Managed Identity
-# Configuratiebestand voor BlobFuse2 aanmaken
-BLOBFUSE_CONFIG="/etc/blobfuse2.yaml"
+  wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb
+  dpkg -i packages-microsoft-prod.deb
+  rm -f packages-microsoft-prod.deb
 
-sudo tee "$BLOBFUSE_CONFIG" > /dev/null <<EOF
-configversion: 2
+  apt update
+  apt install -y blobfuse2
+
+  mkdir -p /mnt/nextclouddata
+  chown -R www-data:www-data /mnt/nextclouddata
+
+  tee "$config" > /dev/null <<EOF
+version: 2
 logging:
   type: syslog
 components:
@@ -44,28 +56,28 @@ components:
   - azstorage
 azstorage:
   type: block
-  account-name: ${STORAGE_ACCOUNT_NAME}
-  container: ${CONTAINER_NAME}
+  account-name: $account
+  container: $container
   auth-type: msi
-  endpoint: https://${STORAGE_ACCOUNT_NAME}.blob.core.windows.net
+  endpoint: https://${account}.blob.core.windows.net
 EOF
 
-# Zorg voor juiste rechten
-sudo chown root:root "$BLOBFUSE_CONFIG"
-sudo chmod 644 "$BLOBFUSE_CONFIG"
+  chown root:root "$config"
+  chmod 644 "$config"
+}
 
-# Mounten met config
-sudo blobfuse2 mount "$MOUNT_POINT" \
-  --config-file="$BLOBFUSE_CONFIG" \
-  --log-level=LOG_DEBUG \
-  --file-cache-timeout=120
+mount_blobfuse2() {
+  local config="$1"
+  local mount="$2"
+  blobfuse2 mount "$mount" --config-file="$config" --log-level=LOG_DEBUG --file-cache-timeout=120
+}
 
-
-# 7. Apache configuratie
-cat <<EOF | sudo tee /etc/apache2/sites-available/nextcloud.conf
+configure_apache() {
+  local dir="$1"
+  cat <<EOF > /etc/apache2/sites-available/nextcloud.conf
 <VirtualHost *:80>
-    DocumentRoot $NEXTCLOUD_DIR
-    <Directory $NEXTCLOUD_DIR/>
+    DocumentRoot $dir
+    <Directory $dir/>
         Require all granted
         AllowOverride All
         Options FollowSymLinks MultiViews
@@ -73,8 +85,9 @@ cat <<EOF | sudo tee /etc/apache2/sites-available/nextcloud.conf
 </VirtualHost>
 EOF
 
-sudo a2ensite nextcloud.conf
-sudo a2enmod rewrite
-sudo systemctl restart apache2
+  a2ensite nextcloud.conf
+  a2enmod rewrite
+  systemctl restart apache2
+}
 
-echo "✅ Nextcloud is bereikbaar op http://$(curl -s ifconfig.me)"
+main
