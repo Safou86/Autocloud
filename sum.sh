@@ -32,8 +32,13 @@ sudo mkdir -p "$MOUNT_POINT"
 sudo chown -R www-data:www-data "$MOUNT_POINT"
 
 # 5. 🔥 Authenticatie via Managed Identity
-cat <<EOF | sudo tee /var/www/blobfuse2.yaml
+# Configuratiebestand voor BlobFuse2 aanmaken
+BLOBFUSE_CONFIG="/etc/blobfuse2.yaml"
+
+sudo tee "$BLOBFUSE_CONFIG" > /dev/null <<EOF
 configversion: 2
+logging:
+  type: syslog
 components:
   - libfuse
   - azstorage
@@ -41,13 +46,20 @@ azstorage:
   type: block
   account-name: ${STORAGE_ACCOUNT_NAME}
   container: ${CONTAINER_NAME}
-  auth-type: msi  # 🔥 Gebruik VM's managed identity
+  auth-type: msi
   endpoint: https://${STORAGE_ACCOUNT_NAME}.blob.core.windows.net
 EOF
 
-sudo chown www-data:www-data /var/www/blobfuse2.yaml
-# 6. Mounten met debug-logging
-sudo blobfuse2 mount "$MOUNT_POINT" --config-file=/var/www/blobfuse2.yaml --allow-other --log-level=LOG_DEBUG --file-cache-timeout=120
+# Zorg voor juiste rechten
+sudo chown root:root "$BLOBFUSE_CONFIG"
+sudo chmod 644 "$BLOBFUSE_CONFIG"
+
+# Mounten met config
+sudo blobfuse2 mount "$MOUNT_POINT" \
+  --config-file="$BLOBFUSE_CONFIG" \
+  --log-level=LOG_DEBUG \
+  --file-cache-timeout=120
+
 
 # 7. Apache configuratie
 cat <<EOF | sudo tee /etc/apache2/sites-available/nextcloud.conf
