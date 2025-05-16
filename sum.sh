@@ -6,10 +6,10 @@ exec > >(tee /var/log/nextcloud-blobfuse-install.log) 2>&1
 STORAGE_ACCOUNT="ezyinm7lu4klq"          # Vervang met je Azure Storage Account
 CONTAINER="nextclouddata"                # Container naam
 MOUNT_POINT="/mnt/nextclouddata"         # Mount directory
-BLOBFUSE_CONFIG="/etc/blobfuse2.cfg"     # Configuratiebestand
+BLOBFUSE_CONFIG="/etc/blobfuse2.yaml"    # Configuratiebestand (nu .yaml)
 
 main() {
-  echo "🚀 Nextcloud + Azure Blob Storage Installatie"
+  echo "🚀 Nextcloud + Azure Blob Storage Installatie (YAML-config)"
   install_dependencies
   install_nextcloud_snap
   setup_blobfuse2
@@ -34,15 +34,15 @@ install_nextcloud_snap() {
 }
 
 setup_blobfuse2() {
-  echo "🔗 Configureer BlobFuse2..."
+  echo "🔗 Configureer BlobFuse2 (YAML-config)..."
   
   # Maak mount directory
   mkdir -p "$MOUNT_POINT"
   chown -R www-data:www-data "$MOUNT_POINT"
 
-  # Maak configuratiebestand
+  # Maak YAML-configuratiebestand
   cat > "$BLOBFUSE_CONFIG" <<EOF
-version: 2
+version: 2.0
 components:
   - libfuse
   - azstorage
@@ -54,18 +54,22 @@ azstorage:
   endpoint: https://${STORAGE_ACCOUNT}.blob.core.windows.net
   blob-cache-timeout: 120
   attr-cache-timeout: 120
+  telemetry: false
+logging:
+  type: syslog
+  level: log_warning
 EOF
 
   # Maak systemd service voor automount
   cat > /etc/systemd/system/blobfuse2.service <<EOF
 [Unit]
-Description=Mount Azure Blob Storage via BlobFuse2
+Description=Mount Azure Blob Storage via BlobFuse2 (YAML)
 After=network.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/blobfuse2 mount $MOUNT_POINT --config-file=$BLOBFUSE_CONFIG -o allow_other
+ExecStart=/usr/bin/blobfuse2 mount $MOUNT_POINT --config-file=$BLOBFUSE_CONFIG -o allow_other --log-level=LOG_WARNING
 Restart=on-failure
 
 [Install]
@@ -79,8 +83,11 @@ EOF
 
 configure_nextcloud_external_storage() {
   echo "🛠️ Configureer externe opslag in Nextcloud..."
-  # Wacht tot Nextcloud actief is
-  while ! snap services nextcloud | grep -q "active"; do
+  # Wacht tot Nextcloud actief is (max 30 seconden)
+  for i in {1..6}; do
+    if snap services nextcloud | grep -q "active"; then
+      break
+    fi
     sleep 5
   done
 
