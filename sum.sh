@@ -9,12 +9,13 @@ main() {
   local mount_point="/mnt/nextclouddata"
   local config_path="/etc/blobfuse2.yaml"
 
-  install_dependencies
-  install_nextcloud "$nextcloud_dir"
-  setup_blobfuse2 "$storage_account" "$container" "$config_path"
-  mount_blobfuse2 "$config_path" "$mount_point"
-  configure_apache "$nextcloud_dir"
+  install_dependencies || return 1
+  install_nextcloud "$nextcloud_dir" || return 1
+  setup_blobfuse2 "$storage_account" "$container" "$config_path" || return 1
+  mount_blobfuse2 "$config_path" "$mount_point" || return 1
+  configure_apache "$nextcloud_dir" || return 1
 }
+
 
 install_dependencies() {
   apt update -y
@@ -69,8 +70,28 @@ EOF
 mount_blobfuse2() {
   local config="$1"
   local mount="$2"
-  blobfuse2 mount "$mount" --config-file="$config" --log-level=LOG_DEBUG --file-cache-timeout=120
+
+  if [[ ! -f "$config" ]]; then
+    printf "❌ Configuratiebestand %s niet gevonden\n" "$config" >&2
+    return 1
+  fi
+
+  if [[ ! -s "$config" ]]; then
+    printf "❌ Configuratiebestand %s bestaat maar is leeg\n" "$config" >&2
+    return 1
+  fi
+
+  if ! grep -q '^version: 2' "$config"; then
+    printf "❌ Configuratiebestand %s bevat geen geldige versie-header\n" "$config" >&2
+    return 1
+  fi
+
+  if ! blobfuse2 mount "$mount" --config-file="$config" --log-level=LOG_DEBUG --file-cache-timeout=120; then
+    printf "❌ blobfuse2 mount is mislukt op mountpoint %s\n" "$mount" >&2
+    return 1
+  fi
 }
+
 
 configure_apache() {
   local dir="$1"
