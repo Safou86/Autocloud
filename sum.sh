@@ -32,7 +32,7 @@ sudo mkdir -p "$MOUNT_POINT"
 sudo chown -R www-data:www-data "$MOUNT_POINT"
 
 # 5. 🔥 Authenticatie via Managed Identity
-cat <<EOF | sudo tee /etc/blobfuse2.yaml
+cat <<EOF | sudo tee /var/www/blobfuse2.yaml
 configversion: 2
 components:
   - libfuse
@@ -45,8 +45,9 @@ azstorage:
   endpoint: https://${STORAGE_ACCOUNT_NAME}.blob.core.windows.net
 EOF
 
+sudo chown www-data:www-data /var/www/blobfuse2.yaml
 # 6. Mounten met debug-logging
-sudo blobfuse2 mount "$MOUNT_POINT" --config-file=/etc/blobfuse2.yaml --allow-other --log-level=LOG_DEBUG --file-cache-timeout=120
+sudo blobfuse2 mount "$MOUNT_POINT" --config-file=/var/www/blobfuse2.yaml --allow-other --log-level=LOG_DEBUG --file-cache-timeout=120
 
 # 7. Apache configuratie
 cat <<EOF | sudo tee /etc/apache2/sites-available/nextcloud.conf
