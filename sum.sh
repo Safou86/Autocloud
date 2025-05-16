@@ -46,7 +46,7 @@ azstorage:
 EOF
 
 # 6. Mounten met debug-logging
-sudo blobfuse2 mount "$MOUNT_POINT" --config-file=/etc/blobfuse2.yaml --allow-other --log-level=LOG_DEBUG
+sudo blobfuse2 mount "$MOUNT_POINT" --config-file=/etc/blobfuse2.yaml --allow-other --log-level=LOG_DEBUG --file-cache-timeout=120
 
 # 7. Apache configuratie
 cat <<EOF | sudo tee /etc/apache2/sites-available/nextcloud.conf
