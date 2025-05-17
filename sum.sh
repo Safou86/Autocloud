@@ -1,103 +1,112 @@
 #!/bin/bash
 set -e
-exec > >(tee /var/log/nextcloud-blobfuse-install.log) 2>&1
-
-# Configuratie
-STORAGE_ACCOUNT="ezyinm7lu4klq"          # Vervang met je Azure Storage Account
-CONTAINER="nextclouddata"                # Container naam
-MOUNT_POINT="/mnt/nextclouddata"         # Mount directory
-BLOBFUSE_CONFIG="/etc/blobfuse2.yaml"    # Configuratiebestand (nu .yaml)
+export DEBIAN_FRONTEND=noninteractive
 
 main() {
-  echo "🚀 Nextcloud + Azure Blob Storage Installatie (YAML-config)"
-  install_dependencies
-  install_nextcloud_snap
-  setup_blobfuse2
-  configure_nextcloud_external_storage
-  echo "✅ Klaar! Nextcloud is bereikbaar op http://$(hostname -I | cut -d' ' -f1)"
+  local nextcloud_dir="/var/www/nextcloud"
+  local storage_account="ezyinm7lu4klq"
+  local container="nextclouddata"
+  local mount_point="/mnt/nextclouddata"
+  local config_path="/etc/blobfuse2.yaml"
+
+  install_dependencies || return 1
+  install_nextcloud "$nextcloud_dir" || return 1
+  setup_blobfuse2 "$storage_account" "$container" "$config_path" || return 1
+  mount_blobfuse2 "$config_path" "$mount_point" || return 1
+  configure_apache "$nextcloud_dir" || return 1
 }
 
 install_dependencies() {
-  echo "🔄 Installeer dependencies..."
   apt update -y
-  apt install -y snapd fuse blobfuse2
+  apt upgrade -y
+  apt install -y apache2 mariadb-server libapache2-mod-php \
+    php php-mysql php-gd php-xml php-mbstring php-curl php-zip php-intl \
+    php-bcmath php-gmp php-imagick unzip wget
 }
 
-install_nextcloud_snap() {
-  echo "📦 Installeer Nextcloud via Snap..."
-  if ! snap list | grep -q nextcloud; then
-    snap install nextcloud
-    snap start nextcloud
-  else
-    echo "ℹ️ Nextcloud is al geïnstalleerd via Snap."
-  fi
+install_nextcloud() {
+  local dir="$1"
+  wget https://download.nextcloud.com/server/releases/latest.zip
+  unzip latest.zip
+  mv nextcloud "$dir"
+  chown -R www-data:www-data "$dir"
 }
 
 setup_blobfuse2() {
-  echo "🔗 Configureer BlobFuse2 (YAML-config)..."
-  
-  # Maak mount directory
-  mkdir -p "$MOUNT_POINT"
-  chown -R www-data:www-data "$MOUNT_POINT"
+  local account="$1"
+  local container="$2"
+  local config="$3"
 
-  # Maak YAML-configuratiebestand
-  cat > "$BLOBFUSE_CONFIG" <<EOF
-version: 2.0
+  wget -q https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb
+  dpkg -i packages-microsoft-prod.deb
+  rm -f packages-microsoft-prod.deb
+
+  apt update
+  apt install -y blobfuse2
+
+  mkdir -p /mnt/nextclouddata
+  chown -R www-data:www-data /mnt/nextclouddata
+
+  cat > "$config" <<EOF
+version: 2
+logging:
+  type: syslog
 components:
   - libfuse
   - azstorage
 azstorage:
   type: block
-  account-name: $STORAGE_ACCOUNT
-  container: $CONTAINER
+  account-name: $account
+  container: $container
   auth-type: msi
-  endpoint: https://${STORAGE_ACCOUNT}.blob.core.windows.net
-  blob-cache-timeout: 120
-  attr-cache-timeout: 120
-  telemetry: false
-logging:
-  type: syslog
-  level: log_warning
+  endpoint: https://${account}.blob.core.windows.net
 EOF
 
-  # Maak systemd service voor automount
-  cat > /etc/systemd/system/blobfuse2.service <<EOF
-[Unit]
-Description=Mount Azure Blob Storage via BlobFuse2 (YAML)
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/bin/blobfuse2 mount $MOUNT_POINT --config-file=$BLOBFUSE_CONFIG -o allow_other --log-level=LOG_WARNING
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  # Start de service
-  systemctl daemon-reload
-  systemctl enable --now blobfuse2.service
+  chown root:root "$config"
+  chmod 644 "$config"
 }
 
-configure_nextcloud_external_storage() {
-  echo "🛠️ Configureer externe opslag in Nextcloud..."
-  # Wacht tot Nextcloud actief is (max 30 seconden)
-  for i in {1..6}; do
-    if snap services nextcloud | grep -q "active"; then
-      break
-    fi
-    sleep 5
-  done
+mount_blobfuse2() {
+  local config="$1"
+  local mount="$2"
 
-  # Voeg externe opslag toe via occ-commando
-  sudo nextcloud.occ app:enable files_external
-  sudo nextcloud.occ files_external:create \
-    "Azure Blob" \
-    local \
-    "$MOUNT_POINT" \
-    -c datadir="$MOUNT_POINT"
+  if [[ ! -f "$config" ]]; then
+    printf "❌ Configuratiebestand %s niet gevonden\n" "$config" >&2
+    return 1
+  fi
+
+  if [[ ! -s "$config" ]]; then
+    printf "❌ Configuratiebestand %s bestaat maar is leeg\n" "$config" >&2
+    return 1
+  fi
+
+  if ! grep -q '^version: 2' "$config"; then
+    printf "❌ Configuratiebestand %s bevat geen geldige versie-header\n" "$config" >&2
+    return 1
+  fi
+
+  if ! blobfuse2 mount "$mount" --config-file="$config" --log-level=LOG_DEBUG --file-cache-timeout=120; then
+    printf "❌ blobfuse2 mount is mislukt op mountpoint %s\n" "$mount" >&2
+    return 1
+  fi
+}
+
+configure_apache() {
+  local dir="$1"
+  cat <<EOF > /etc/apache2/sites-available/nextcloud.conf
+<VirtualHost *:80>
+    DocumentRoot $dir
+    <Directory $dir/>
+        Require all granted
+        AllowOverride All
+        Options FollowSymLinks MultiViews
+    </Directory>
+</VirtualHost>
+EOF
+
+  a2ensite nextcloud.conf
+  a2enmod rewrite
+  systemctl restart apache2
 }
 
 main
